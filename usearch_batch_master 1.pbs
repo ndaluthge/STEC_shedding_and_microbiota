@@ -1,0 +1,36 @@
+#!/bin/sh
+#SBATCH --ntasks=10
+#SBATCH --time=05:59:00
+#SBATCH --mem-per-cpu=5000
+#SBATCH --output=usearch.%J.stdout
+#SBATCH --error=usearch.%J.stderr
+#SBATCH --qos=short
+#SBATCH --partition=batch,guest,tmp_anvil
+
+module load qiime/1.9
+module load fastx_toolkit/0.0.14
+
+#truncate_reverse_primer.py -f STEC_all_plates_split_lib_seqs.fna -m STEC_rev_prim_mapping.txt -z truncate_only -M 2 -o reverse_primer_removed_truncate_only/
+/work/samodha/ndaluthge/mothur/mothur "#trim.seqs(fasta=STEC_all_plates_split_lib_seqs_rev_primer_truncated_removed.fna, minlength=130)"
+fastx_trimmer -i STEC_all_plates_split_lib_seqs_rev_primer_truncated_removed.trim.fasta -l 130 -o STEC.trim.fasta
+/work/samodha/ndaluthge/mothur/mothur "#reverse.seqs(fasta=STEC.trim.fasta)"
+
+
+./qiime_to_usearch.pl -fasta=STEC.trim.rc.fasta -prefix=STEC
+./usearch7.0.10 -derep_fulllength format.fasta -sizeout -output STEC.derep.fa
+./usearch7.0.10 -sortbysize STEC.derep.fa -minsize 2 -output STEC.derep.sort.fa
+./usearch7.0.10 -cluster_otus STEC.derep.sort.fa -otus STEC.otus1.fa
+./usearch7.0.10 -uchime_ref STEC.otus1.fa -db gold.fasta -strand plus -nonchimeras STEC.otus1.nonchimera.fa
+python /work/samodha/ndaluthge/MiSeq_SOP/usearch_python_scripts/fasta_number.py STEC.otus1.nonchimera.fa > STEC.otus2.fa
+./usearch7.0.10 -usearch_global format.fasta -db STEC.otus2.fa -strand plus -id 0.97 -uc STEC.otu_map.uc
+python /work/samodha/ndaluthge/MiSeq_SOP/usearch_python_scripts/uc2otutab.py STEC.otu_map.uc > STEC.otu_table.txt
+
+module load qiime/1.9
+
+assign_taxonomy.py -i test.otus2.fa -t gg_13_8_otus/taxonomy/97_otu_taxonomy.txt -r gg_13_8_otus/rep_set/97_otus.fasta -o assigned_gg_taxa
+
+#wget http://www.mothur.org/w/images/2/27/Silva.nr_v119.tgz
+#tar -zxvf Silva.nr_v119.tgz 
+#/work/samodha/ndaluthge/mothur/mothur "#pcr.seqs(fasta=silva.nr_v119.align, start=11894, end=25319, keepdots=F, processors=8)"
+#/work/samodha/ndaluthge/mothur/mothur "#system(mv silva.nr_v119.pcr.align silva.v4.fasta)"
+#/work/samodha/ndaluthge/mothur/mothur "#align.seqs(fasta=test.otus2.fa, reference=silva.v4.fasta)"
