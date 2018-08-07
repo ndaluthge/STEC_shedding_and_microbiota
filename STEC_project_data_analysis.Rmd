@@ -1,0 +1,311 @@
+---
+title: "STEC shedding and microbiota of beef cattle"
+author: "Nirosh Aluthge"
+date: "6/6/2018"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<div style="margin-bottom:50px;">
+</div>
+#### **INTRODUCTION** 
+This R Markdown file describes in detail the steps used in the analysis of the manuscript **"The influence of the bovine gastrointestinal microbiota on the shedding of Shiga toxin-producing *Escherichia coli* (STEC)" ** by Aluthge et al.   
+
+All the steps described in this analysis were performed on 
+
+##### **Demultiplexing and initial quality control**
+The Ion Torrent PGM^TM^ sequencing for this study was performed as 14 separate sequencing runs with 96 samples sequenced in each run. Each run generated a separate .fastq file specific for that run (so, in total there were 14 '.fastq' files). The sequencing data from each run was generated in a .fna format from the .fastq file using the following QIIME command:
+
+```convert_fastaqual_fatsq.py -c fastaq_to_fastaqual -f seqs.fastq -o fatsaqual
+```
+
+Subsequently, for each '.fna' file the following QIIME command was run in order to demultiplex the sequences into their corresponding samples (Note that 'my.fna' is .fna file resulting from running the **convert_fastaqual_fatsq.py** command and that 'my_mapping_file.txt' contains the sample names and coresponding barcodes. Consult the QIIME documentation related to this command for information about the different arguments used)
+
+```split_libraries.py -f my_fastaqual/my.fna -b variable_length -l 0 -L 1000 -x -M 1 -o split_library_my/ -m my_mapping_file.txt
+```
+
+Subsequently, all the resulting FASTA files from the **split_libraries.py** command (there should be 14 such files - '.fna' extension' corresponding to each of the 14 sequencing runs) were concatenated (using the 'cat' command in a Linux command line).
+After concatenating all the split library '.fna' files (at this stage the barcodes and forward primers had been removed) the following command was run to remove the reverse primers from the sequences:
+
+```truncate_reverse_primer.py -f STEC_all_plates_seqs.fna -m STEC_rev_prim_mapping.txt -z truncate_only -M 2 -o reverse_primer_removed_truncate_only/
+```
+
+The ‘truncate_only’ options looks for the reverse primer in a read and if it finds it removes the reverse primer and writes the truncated sequence to a new file. If it doesn’t find it, that sequence is written to the new file in an unchanged manner.
+
+<div style="margin-bottom:50px;">
+</div>
+
+####**Initial quality control**
+
+The resulting truncated file 'STEC_all_plates_split_lib_seqs_rev_primer_truncated_removed.fna' file was then checked for any sequences which still had the reverse and/or forward primers remaining. After filtering off such sequences, the file contained **26,561,969** sequences (5.32GB). This file couldn't be uploaded to GitHub due to size restrictions. 
+
+Because of the large size of the 'STEC_all_plates_split_lib_seqs_rev_primer_truncated_removed.fna' file, the subsequent commands described were run on the UNL HCC supercomputers in order to support the memory requirements and to run the commands within a reasonable amount of time.
+
+Subsequently, the reads are trimmed to a uniform length of 130 bp using the following commands:
+
+```mothur "#trim.seqs(fasta=STEC_all_plates_split_lib_seqs_rev_primer_truncated_removed.fna, minlength=130)"
+```
+
+```module load fastx_toolkit/0.0.14
+```
+
+```fastx_trimmer -i STEC_all_plates_split_lib_seqs_rev_primer_truncated_removed.trim.fasta -l 130 -o STEC.trim.fasta
+```
+
+It's good to check if all the sequences have indeed been trimmed to 130 bp by running the 'summary.seqs' command in MOTHUR:
+
+```mothur "#summary.seqs(fasta=STEC.trim.fasta)"
+```
+
+The sequences were then reverse complemented:
+
+```mothur "#reverse.seqs(fasta=STEC.trim.fasta)"
+```
+
+The reverse complemented sequences now needed to be formatted in a way that they can be recognized by USEARCH. This was performed by running the custom PERL script **qiime_to_usearch.pl**:
+
+```./qiime_to_usearch.pl -fasta=STEC.trim.rc.fasta -prefix=STEC
+```
+
+The 'USEARCH formatted sequences ' were then run through the UPARSE pipeline :
+
+```
+./usearch7.0.10 -derep_fulllength format.fasta -sizeout -output STEC.derep.fa
+./usearch7.0.10 -sortbysize STEC.derep.fa -minsize 2 -output STEC.derep.sort.fa
+./usearch7.0.10 -cluster_otus STEC.derep.sort.fa -otus STEC.otus1.fa
+./usearch7.0.10 -uchime_ref STEC.otus1.fa -db gold.fasta -strand plus -nonchimeras STEC.otus1.nonchimera.fa
+python usearch_python_scripts/fasta_number.py STEC.otus1.nonchimera.fa > STEC.otus2.fa
+./usearch7.0.10 -usearch_global format.fasta -db STEC.otus2.fa -strand plus -id 0.97 -uc STEC.otu_map.uc
+python usearch_python_scripts/uc2otutab.py STEC.otu_map.uc > STEC.otu_table.txt
+```
+
+Taxonomy was assigned using the QIIME compatible version of the 'SILVA_123' database release:
+
+```assign_taxonomy.py -i STEC.otus2.fa -t SILVA123_QIIME_release/taxonomy/taxonomy_all/97/taxonomy_7_levels.txt -r SILVA123_QIIME_release/rep_set/rep_set_all/97/97_otus.fasta -o assigned_taxa_SILVA
+```
+
+The 'STEC.otu_table.txt' doesn't have a column with the taxonomy information for each of the OTUs. The taxonomy assignments for the OTUs are in fact in a file called 'STEC.otus2_tax_assignments.txt' which is located inside the folder 'assign_taxa_SILVA'. In order to assign the taxonomy info from this file into the OTU table, teh following steps were followed:
+
+First, the OTU table was sorted by OTU number in ascending order:
+
+```
+awk 'NR<2{print $0;next}{print $0| "sort -nk1,1"}' STEC.otu_table.txt > STEC.otu_table.sort.txt  #this command is set up so that the header line is ignored when sorting
+```
+
+Similarly, the 'STEC.otus2_tax_assignments.txt' file was ordered by OTU number in ascending order:
+
+```
+sort -n -k 1 assigned_taxa_SILVA/STEC.otus2_tax_assignments.txt > assigned_taxa_SILVA/STEC.otus2_tax_assignments.sort.txt
+```
+
+The second column of the 'STEC.otus2_tax_assignments.sort.txt' which has the SILVA taxonomy information was labeled as 'taxonomy'
+
+```
+{ printf '\ttaxonomy\t\t\n'; cat assigned_taxa_SILVA/STEC.otus2_tax_assignments.sort.txt ; } > assigned_taxa_SILVA/STEC.otus2_tax_assignments.sort.label.txt
+```
+
+Subsequently, this 'taxonomy' column was pasted as the final column of 'STEC.otu_table.sort.txt'
+
+```
+paste STEC.otu_table.sort.txt <(cut -f 2 assigned_taxa_SILVA/STEC.otus2_tax_assignments.sort.label.txt) > STEC.otu_table_taxa.txt
+```
+
+Finally, the 'STEC.otu_table_taxa.txt' was converted to biom format:
+
+```
+biom convert -i STEC.otu_table_taxa.txt -o STEC.otu_table_taxa.biom --table-type="OTU table" --process-obs-metada taxonomy --to-json
+```
+
+The 'STEC_otus2.fa' file contained the reprsentative sequences (rep set) of all the 25175 OTUs of the data set. However, it is possible that some of these OTUs are erraneous reads that do not align within the targeted V4 hypervariable region of the 16S rRNA gene. Thus, the following steps were carried out to identify these 'non-aligning' OTUs and filter them out of the OTU table.
+
+The 'STEC_otus2.fa' file was aligned to the bacterial 16S rRNA gene using the RDP aligner Tool (https://pyro.cme.msu.edu/login.spr). The resulting unzipped folder contained a file named 'aligned_STEC.otus2.fa_alignment_summary.txt' with the alignment start and end positions for each of teh rep set sequences. Based on these start and end positions, the properly aligning OTU sequences were determined according to the criteria set out by Paz et al. in the data analysis for their publication (https://github.com/FernandoLab/2016_Paz_et_al_Dairy_Breeds/blob/master/dairy_breeds.Rmd). The minimum start position was **324** and the maximum start position was **354** while all sequences had to end at **454**. This was performed in the R environment as follows
+
+```{r, echo=TRUE}
+aligned_OTUs <- read.table("aligned_STEC.otus2.fa_alignment_summary-1.txt", header=T, sep="\t")
+prop_aligning_OTUs <- subset(aligned_OTUs, (Startposition >= 324 & Startposition <= 354) & Endposition == 454, select=SequenceId)
+write.table (prop_aligning_OTUs, file = "properly_aligned_OTUs.txt", col.names = F, row.names = F)
+```
+The resulting 'properly_aligning_OTUs.txt' consisted of **24,010** OTUs that were aligning properly within the expected region of the 16S rRNA gene.
+
+The OTU table was then 'filtered' so that only the correctly aligning OTUs were retained. Also, checked for singletons and remove them (although the UPARSE pipeline should have already done this). This was done using the following QIIME command:
+
+```
+filter_otus_from_otu_table.py -i STEC.otu_table_taxa.biom -o prop_aligning_STEC.otu_table_taxa.biom --negate_ids_to_exclude -e properly_aligning_OTUs.txt -n 2
+```
+
+In addition, 'Cyanobacteria' sequences were removed as we believe that these organisms may have been intoduced to the animals as part of their feed and, being photosynthetic, would not be natural inhabitants of the cattle gastrointestinal tract.
+
+```
+filter_taxa_from_otu_table.py -i prop_aligning_STEC.otu_table_taxa.biom -o prop_aligning_cyano_filtered_STEC.otu_table_taxa.biom -n D_1__Cyanobacteria
+```
+
+Due to mislabeling, some sampleIDs in the mapping file did not match with sampleIDs in the OTU table. Therefore, the OTU table was filtered so that only the sampleIDs which corresponded with sampleIDs in the mapping file remained:
+
+```
+filter_samples_from_otu_table.py -i cyanobacteria_filtered_STEC.otu_table.biom -o mapping_file_samples_STEC.otu_table.biom --sample_id_fp samples_in_mapping.txt
+biom summarize-table -i mapping_file_samples_STEC.otu_table.biom
+```
+
+Based on the distribution of sequences per sample, it was decided to remove 9 samples which had <3000 sequences (in the file 'less_than_3000_samples.txt') :
+
+```
+filter_samples_from_otu_table.py -i mapping_file_samples_STEC.otu_table.biom -o correct_STEC.otu_table.biom --sample_id_fp less_than_3000_samples.txt --negate_sample_id_fp
+```
+The resulting 'final' OTU table known as **correct_STEC.otu_table.biom** was subsequently used for all downstream analyses.
+
+A phylogenetic tree was also generated using the aligned file 'aligned_STEC.otus2.fa' found in the unzipped alignment file generated from RDP aligner. The phylogenetic tree will be generated in MOTHUR, and in order to make the RDP aligned file compatible with the MOTHUR format, need to add 10 'A's at the beginning of each header and replace the '.' characters in the alignment with '-' characters. In addition, for some reason the last header in the alignment file looks like '#=GC_RF' which is not an OTU so this header and its associated sequence needs to be removed as well:
+
+```
+sed -i -e 's/>/>AAAAAAAAAA/g' aligned_STEC.otus2.fa
+sed -e :a -e '$d;N;2,2ba' -e 'P;D' aligned_STEC.otus2.fa > new_aligned_STEC.otus2.fa #removes the 'weird' last header and sequence
+sed -i -e 's/\./-/g' new_aligned_STEC.otus2.fa #replaces '.' with '-'
+```
+
+Now we can use this file as input to MOTHUR to generate the phylogenetic tree using 'clearcut':
+
+```
+mothur "#dist.seqs(fasta=new_aligned_STEC.otus2.fa, processors=2, cutoff=.10, output=phylip)"
+mothur "#clearcut(phylip=new_aligned_STEC.otus2.phylip.dist)
+sed -i -e 's/AAAAAAAAAA//g' new_aligned_STEC.otus2.phylip.tre #need to remove the 10 A's that we had put in the header at the beginning
+```
+
+The 'clearcut' command above takes a long time to run on a normal laptop so it's better to do that step in a server or a higher memory computer.
+
+The OTU table, mapping file and phylogenetic tree were subsequently used to create a phyloseq object:
+
+```{r, echo=TRUE}
+library("phyloseq"); packageVersion("phyloseq")
+library("biomformat"); packageVersion("biomformat")
+
+biomfile <- "correct_STEC.otu_table.biom" #importing OTU table
+mainbiomfile <- biomformat::read_biom(biom_file = biomfile) 
+mp0 = import_biom(mainbiomfile, parseFunction = parse_taxonomy_default)
+tax_table(mp0) <- tax_table(mp0)[, 1:7]
+rank_names(mp0)
+
+qsd <- import_qiime_sample_data("STEC_2014_master_mapping_file.txt") #importing mapping file
+mp1 <- merge_phyloseq(mp0, qsd)
+sample_names(mp0)
+nrow(qsd)
+sample_names(qsd)
+mp1 <- merge_phyloseq(mp0, qsd)
+mp1
+sample_variables(mp1)
+
+treeFile = "new_aligned_STEC.otus2.phylip.tre" #importing phylogenetic tree
+my_tree <- read_tree(treeFile)
+my_tree
+
+class(my_tree) #provides details about imported tree
+
+STEC_main_object <- merge_phyloseq(mp1, my_tree)
+STEC_main_object #the summary provided allows us to check that everything has been properly imported
+```
+
+Since we had animals (Bovine) from two separate years involved in this study, it was decided to analyze the data for the two years separately. In order to do this, the main OTU table was split based on sampling year:
+
+```{r, echo = TRUE}
+data(STEC_main_object)
+STEC_2011_data <- subset_samples(STEC_main_object, Year == "2011")
+STEC_2013_data <- subset_samples(STEC_main_object, Year == "2013")
+
+STEC_2011_data
+STEC_2013_data
+```
+
+#### **Analysis of shedding phenotype and microbiota** 
+
+Not all the samples in our 2011 and 2013 OTU tables had shedding information. Therefore, in order to look at the influence of microbiota on shedding phenotype, separate OTU tables were made (for both 2011 and 2013) which contained only those samples which had shedding information. A separate mapping file with sample meta data for only those samples with shedding information was also prepared ('STEC_2014_shedders_mapping.txt'). This was done as follows using QIIME :
+
+```
+filter_samples_from_otu_table.py -i correct_STEC.otu_table.biom -o shedders_only.otu_table.biom --sample_id_fp all_shedder_samples.txt #this file contains the list of samples with shedder info from both years
+
+biom summarize-table -i shedders_only.otu_table.biom # output shows that there are a total of 556 samples
+
+split_otu_table.py -i shedders_only.otu_table.biom -o split_by_year -m STEC_2014_shedders_mapping.txt -f Year #splits the OTU table based on year
+```
+ 
+Each year's 'shedder OTU table' was then combined with the shedder only mapping file and the phylogenetic tree imported earlier to make phyloseq objects:
+
+```{r, echo = TRUE}
+biom2011 <- "shedders_only/split_by_year/shedders_only.otu_table_Year_2011.biom" #importing OTU table
+biomfile_2011 <- biomformat::read_biom(biom_file = biom2011) 
+mp2011 = import_biom(biomfile_2011, parseFunction = parse_taxonomy_default)
+tax_table(mp2011) <- tax_table(mp2011)[, 1:7]
+rank_names(mp2011)
+
+shedder_mapping <- import_qiime_sample_data("shedders_only/STEC_2014_shedders_mapping.txt") #importing mapping file
+mp2 <- merge_phyloseq(mp2011, shedder_mapping)
+mp2
+sample_variables(mp2)
+
+STEC_shedders_2011 <- merge_phyloseq(mp2, my_tree)
+STEC_shedders_2011
+
+```
+
+Similarly, for 2013 samples......
+
+```{r, echo = TRUE}
+biom2013 <- "shedders_only/split_by_year/shedders_only.otu_table_Year_2013.biom" #importing OTU table
+biomfile_2013 <- biomformat::read_biom(biom_file = biom2013) 
+mp2013 = import_biom(biomfile_2013, parseFunction = parse_taxonomy_default)
+tax_table(mp2013) <- tax_table(mp2013)[, 1:7]
+rank_names(mp2013)
+
+mp3 <- merge_phyloseq(mp2013, shedder_mapping)
+mp3
+sample_variables(mp3)
+
+STEC_shedders_2013 <- merge_phyloseq(mp3, my_tree)
+STEC_shedders_2013
+```
+
+### **Alpha diversity analyses**
+
+We first wanted to see if there were any differences in alpha diversity among the different shedding phenotypes:
+
+```{r, echo = TRUE }
+alpha_2011 <- plot_richness(STEC_shedders_2011, x="Sheddingphenotype", measures=c("Shannon", "Simpson"), color="Sheddingphenotype") #for 2011 samples
+alpha_2011
+
+alpha_2013 <- plot_richness(STEC_shedders_2013, x="Sheddingphenotype", measures=c("Shannon", "Simpson"), color="Sheddingphenotype") #for 2013 samples
+alpha_2013
+```
+
+### **Beta diversity analyses**
+
+Using phyloseq, beta diversity analyses were performed for the samples of each year using weighted and unweighted unifrac distance matrices
+```{r, echo = TRUE}
+wufpcoa2011 <- ordinate(STEC_shedders_2011, "PCoA", distance = "unifrac", weighted=TRUE)
+P1 <- plot_ordination(STEC_shedders_2011, wufpcoa2011, color = "Sheddingphenotype")
+P1
+
+wufpcoa2013 <- ordinate(STEC_shedders_2013, "PCoA", distance = "unifrac", weighted=TRUE)
+P2 <- plot_ordination(STEC_shedders_2013, wufpcoa2013, color = "Sheddingphenotype")
+P2
+```
+
+We also looked at beta diversity using ** Bray-Curtis** distances. The Phyloseq web page recommends transforming data from raw counts into proprtions in order to calculate Bray-Curtis distances:
+
+```{r, echo = TRUE}
+STEC_shedders_2011.prop <- transform_sample_counts(STEC_shedders_2011, function(otu) otu/sum(otu))
+ord.nmds.bray <- ordinate(STEC_shedders_2011.prop, method="NMDS", distance = "bray")
+P3 <- plot_ordination(STEC_shedders_2011.prop, ord.nmds.bray, color="Sheddingphenotype", title="Bray-Curtis NMDS: 2011")
+P3
+
+STEC_shedders_2013.prop <- transform_sample_counts(STEC_shedders_2013, function(otu) otu/sum(otu))
+ord.nmds.bray <- ordinate(STEC_shedders_2013.prop, method="NMDS", distance = "bray")
+P4 <- plot_ordination(STEC_shedders_2013.prop, ord.nmds.bray, color="Sheddingphenotype", title="Bray-Curtis NMDS: 2013")
+P4
+```
+
+
+
+
+
