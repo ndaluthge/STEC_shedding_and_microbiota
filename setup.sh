@@ -12,9 +12,9 @@ anaconda/bin/conda create -n STECEnv python pip numpy matplotlib=1.4.3 scipy pan
 source anaconda/bin/activate STECEnv
 pip install https://github.com/biocore/qiime/archive/1.9.0.tar.gz
 
-anaconda/bin/conda install -c r r r-xml
+anaconda/bin/conda install -c r r r-XML
 anaconda/bin/conda install -c https://conda.binstar.org/asmeurer pandoc
-anaconda/bin/conda install -c https://conda.binstar.org/r rpy2=2.5.6
+anaconda/bin/conda install -c https://conda.anaconda.org/r rpy2=2.5.6
 
 wget -O anaconda/envs/STECEnv/bin/usearch $1
 chmod 775 anaconda/envs/STECEnv/bin/usearch 
